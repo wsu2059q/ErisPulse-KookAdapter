@@ -21,7 +21,7 @@ class CallApi:
         target_id: str,
         type: int,
         content: str,
-        quote_msg_id: str = None,
+        quote: str = None,
         template_id: str = None,
         **kwargs
     ) -> dict:
@@ -32,6 +32,12 @@ class CallApi:
                 "msg": "token未刷新, 请刷新后重试",
                 "data": {}
             }
+        
+        # DEBUG: 打印接收到的参数
+        print(f"[DEBUG send_message] target_id={target_id}, type={type}, content={content[:50] if content else 'None'}...")
+        print(f"[DEBUG send_message] quote={quote}, template_id={template_id}")
+        print(f"[DEBUG send_message] kwargs={kwargs}")
+        
         nonce = str(uuid.uuid4())
         payload = {
             "nonce": nonce,
@@ -39,8 +45,8 @@ class CallApi:
             "type": type,
             "content": content,
         }
-        if quote_msg_id:
-            payload["quote"] = quote_msg_id
+        if quote:
+            payload["quote"] = quote
         if template_id:
             payload["template_id"] = template_id
         
@@ -48,6 +54,9 @@ class CallApi:
         for key, value in kwargs.items():
             if value is not None:
                 payload[key] = value
+        
+        # DEBUG: 打印最终 payload
+        print(f"[DEBUG send_message] final payload={payload}")
         
         async with self.session.post(
             "https://www.kookapp.cn/api/v3/message/create",
@@ -65,7 +74,7 @@ class CallApi:
         target_id: str,
         type: int,
         content: str,
-        quote_msg_id: str = None,
+        quote: str = None,
         template_id: str = None,
         **kwargs
     ) -> dict:
@@ -83,8 +92,8 @@ class CallApi:
             "type": type,
             "content": content,
         }
-        if quote_msg_id:
-            payload["quote"] = quote_msg_id
+        if quote:
+            payload["quote"] = quote
         if template_id:
             payload["template_id"] = template_id
         

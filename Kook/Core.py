@@ -324,27 +324,30 @@ class KookAdapter(BaseAdapter):
         """
         target_type = params.get("target_type", "group")
         
+        # 移除内部使用的 target_type 参数，避免传递给 API
+        api_params = {k: v for k, v in params.items() if k != "target_type"}
+        
         if endpoint == "/message/create":
-            if target_type == "user":
+            if target_type in ("private", "user"):
                 # 私信消息
-                return await self.api.send_direct_message(**params)
+                return await self.api.send_direct_message(**api_params)
             else:
                 # 频道消息（默认）
-                return await self.api.send_message(**params)
+                return await self.api.send_message(**api_params)
         elif endpoint == "/message/update":
-            if target_type == "user":
+            if target_type in ("private", "user"):
                 # 更新私信消息
-                return await self.api.update_direct_message(**params)
+                return await self.api.update_direct_message(**api_params)
             else:
                 # 更新频道消息
-                return await self.api.update_channel_message(**params)
+                return await self.api.update_channel_message(**api_params)
         elif endpoint == "/message/delete":
-            if target_type == "user":
+            if target_type in ("private", "user"):
                 # 删除私信消息
-                return await self.api.delete_direct_message(**params)
+                return await self.api.delete_direct_message(**api_params)
             else:
                 # 删除频道消息
-                return await self.api.delete_channel_message(**params)
+                return await self.api.delete_channel_message(**api_params)
         elif endpoint == "/asset/create":
             # 上传文件接口，需要 file_path 参数
             return await self.api.upload_file(**params)

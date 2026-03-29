@@ -10,6 +10,7 @@ import time
 
 class KookAdapterConverter:
     def convert(self, data):
+        print("[DEBUG Convert] Input:", data)
         d = data.get("d", {})
         extra = d.get("extra", {})
         author = extra.get("author", {})
@@ -42,6 +43,8 @@ class KookAdapterConverter:
                 onebot_data["detail_type"] = "private"
             elif channel_type == "GROUP":
                 onebot_data["group_id"] = d.get("target_id", "")
+                # Kook 平台频道消息需要使用频道ID作为发送目标
+                onebot_data["channel_id"] = d.get("target_id", "")
                 
             mentions = extra.get("mention", [])
             if mentions:
@@ -49,9 +52,9 @@ class KookAdapterConverter:
                 
         elif onebot_data["type"] == "notice":
             onebot_data["user_id"] = author.get("id", "")
-            onebot_data["guild_id"] = extra.get("guild_id", "")
+            onebot_data["group_id"] = extra.get("body", {}).get("channel_id", "")
             onebot_data.update(self._convert_notice_data(data))
-            
+        print("[DEBUG Convert] Output:", onebot_data)
         return onebot_data
     
     def _get_message_type(self, data):
@@ -61,20 +64,28 @@ class KookAdapterConverter:
         }.get(kook_type, "message")
     
     def _get_detail_type(self, data):
+        """获取 OneBot12 标准 detail_type
+        
+        根据 OneBot12 标准：
+        - detail_type 表示消息场景：private(私聊) 或 group(群组)
+        - 不是消息内容的格式(text/image/kmarkdown等)
+        """
         d = data.get("d", {})
         kook_type = d.get("type", 0)
+        channel_type = d.get("channel_type", "")
+        
+        # Notice 事件使用 Kook 的原始事件类型
         if kook_type == 255:
             return data.get("d", {}).get("extra", {}).get("type", "")
         
-        return {
-            1: "text",
-            2: "image",
-            3: "video",
-            4: "file",
-            8: "record",
-            9: "kmarkdown",
-            10: "json",
-        }.get(kook_type, "unknown")
+        # 根据 channel_type 判断是群组消息还是私聊消息
+        # OneBot12 标准：group = 群组/频道消息, private = 私聊消息
+        if channel_type == "PERSON":
+            return "private"
+        elif channel_type == "GROUP":
+            return "group"
+        else:
+            return "unknown"
     
     def _convert_message_content(self, data):
         d = data.get("d", {})
@@ -131,39 +142,39 @@ class KookAdapterConverter:
         
         # 映射 Kook 事件类型到标准 notice_type
         if event_type == "added_reaction":
-            notice_data["notice_type"] = "reaction_added"
+            notice_data["detail_type"] = "group"
             notice_data["sub_type"] = "added_reaction"
-            notice_data["channel_id"] = body.get("channel_id", "")
+            notice_data["group_id"] = body.get("channel_id", "")
             notice_data["message_id"] = body.get("msg_id", "")
             notice_data["user_id"] = body.get("user_id", "")
             notice_data["emoji"] = body.get("emoji", {})
         elif event_type == "deleted_reaction":
-            notice_data["notice_type"] = "reaction_removed"
+            notice_data["detail_type"] = "group"
             notice_data["sub_type"] = "deleted_reaction"
-            notice_data["channel_id"] = body.get("channel_id", "")
+            notice_data["group_id"] = body.get("channel_id", "")
             notice_data["message_id"] = body.get("msg_id", "")
             notice_data["user_id"] = body.get("user_id", "")
             notice_data["emoji"] = body.get("emoji", {})
         elif event_type == "private_added_reaction":
-            notice_data["notice_type"] = "reaction_added"
+            notice_data["detail_type"] = "private"
             notice_data["sub_type"] = "private_added_reaction"
             notice_data["message_id"] = body.get("msg_id", "")
             notice_data["user_id"] = body.get("user_id", "")
             notice_data["emoji"] = body.get("emoji", {})
         elif event_type == "private_deleted_reaction":
-            notice_data["notice_type"] = "reaction_removed"
+            notice_data["detail_type"] = "private"
             notice_data["sub_type"] = "private_deleted_reaction"
             notice_data["message_id"] = body.get("msg_id", "")
             notice_data["user_id"] = body.get("user_id", "")
             notice_data["emoji"] = body.get("emoji", {})
         elif event_type == "updated_private_message":
-            notice_data["notice_type"] = "message_updated"
+            notice_data["detail_type"] = "private"
             notice_data["sub_type"] = "updated_private_message"
             notice_data["message_id"] = body.get("msg_id", "")
             notice_data["user_id"] = body.get("author_id", "")
             notice_data["content"] = body.get("content", "")
         elif event_type == "deleted_private_message":
-            notice_data["notice_type"] = "message_deleted"
+            notice_data["detail_type"] = "private"
             notice_data["sub_type"] = "deleted_private_message"
             notice_data["message_id"] = body.get("msg_id", "")
             notice_data["user_id"] = body.get("author_id", "")
