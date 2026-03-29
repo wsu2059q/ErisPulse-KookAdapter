@@ -9,8 +9,11 @@ import time
 
 
 class KookAdapterConverter:
+    def __init__(self):
+        from ErisPulse.Core import logger
+        self.logger = logger.get_child("KookAdapterConverter")
+    
     def convert(self, data):
-        print("[DEBUG Convert] Input:", data)
         d = data.get("d", {})
         extra = d.get("extra", {})
         author = extra.get("author", {})
@@ -54,7 +57,8 @@ class KookAdapterConverter:
             onebot_data["user_id"] = author.get("id", "")
             onebot_data["group_id"] = extra.get("body", {}).get("channel_id", "")
             onebot_data.update(self._convert_notice_data(data))
-        print("[DEBUG Convert] Output:", onebot_data)
+        
+        self.logger.debug(f"Convert Output: {onebot_data}")
         return onebot_data
     
     def _get_message_type(self, data):

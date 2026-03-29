@@ -1,10 +1,14 @@
 import aiohttp
 import uuid
+import os
 
 class CallApi:
     def __init__(self, token: str):
         self.token = token
         self.session = aiohttp.ClientSession()
+        
+        from ErisPulse.Core import logger
+        self.logger = logger.get_child("KookApi")
     
     async def close(self):
         if self.session.closed:
@@ -15,6 +19,31 @@ class CallApi:
         if not self.session.closed:
             return
         await self.session.start()
+
+    def _standardize_response(self, raw_response: dict, message_id: str = "") -> dict:
+        code = raw_response.get("code", -1)
+        msg = raw_response.get("message", "")
+        
+        if code == 0:
+            # 成功
+            return {
+                "status": "ok",
+                "retcode": 0,
+                "data": raw_response.get("data", {}),
+                "message_id": message_id or raw_response.get("data", {}).get("msg_id", ""),
+                "message": msg or "操作成功",
+                "Kook_raw": raw_response
+            }
+        else:
+            # 失败
+            return {
+                "status": "failed",
+                "retcode": code,
+                "data": None,
+                "message_id": "",
+                "message": msg or f"操作失败 (code={code})",
+                "Kook_raw": raw_response
+            }
 
     async def send_message(
         self,
@@ -28,15 +57,15 @@ class CallApi:
         """发送频道消息"""
         if not self.token:
             return {
-                "code": -1,
-                "msg": "token未刷新, 请刷新后重试",
-                "data": {}
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "token未刷新, 请刷新后重试",
+                "Kook_raw": None
             }
         
-        # DEBUG: 打印接收到的参数
-        print(f"[DEBUG send_message] target_id={target_id}, type={type}, content={content[:50] if content else 'None'}...")
-        print(f"[DEBUG send_message] quote={quote}, template_id={template_id}")
-        print(f"[DEBUG send_message] kwargs={kwargs}")
+        self.logger.debug(f"send_message: target_id={target_id}, type={type}, content={content[:50] if content else 'None'}...")
         
         nonce = str(uuid.uuid4())
         payload = {
@@ -55,8 +84,7 @@ class CallApi:
             if value is not None:
                 payload[key] = value
         
-        # DEBUG: 打印最终 payload
-        print(f"[DEBUG send_message] final payload={payload}")
+        self.logger.debug(f"send_message payload: {payload}")
         
         async with self.session.post(
             "https://www.kookapp.cn/api/v3/message/create",
@@ -67,7 +95,8 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return data
+            message_id = data.get("data", {}).get("msg_id", "")
+            return self._standardize_response(data, message_id)
 
     async def send_direct_message(
         self,
@@ -81,10 +110,14 @@ class CallApi:
         """发送私信消息"""
         if not self.token:
             return {
-                "code": -1,
-                "msg": "token未刷新, 请刷新后重试",
-                "data": {}
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "token未刷新, 请刷新后重试",
+                "Kook_raw": None
             }
+        
         nonce = str(uuid.uuid4())
         payload = {
             "nonce": nonce,
@@ -111,7 +144,8 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return data
+            message_id = data.get("data", {}).get("msg_id", "")
+            return self._standardize_response(data, message_id)
 
     async def update_direct_message(
         self,
@@ -121,13 +155,16 @@ class CallApi:
         template_id: str = None,
         **kwargs
     ) -> dict:
-        """更新私信消息（仅支持 KMarkdown type=9 和 CardMessage type=10）"""
         if not self.token:
             return {
-                "code": -1,
-                "msg": "token未刷新, 请刷新后重试",
-                "data": {}
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "token未刷新, 请刷新后重试",
+                "Kook_raw": None
             }
+        
         payload = {
             "msg_id": msg_id,
             "content": content,
@@ -151,7 +188,7 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return data
+            return self._standardize_response(data)
 
     async def delete_direct_message(
         self,
@@ -161,10 +198,14 @@ class CallApi:
         """删除私信消息"""
         if not self.token:
             return {
-                "code": -1,
-                "msg": "token未刷新, 请刷新后重试",
-                "data": {}
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "token未刷新, 请刷新后重试",
+                "Kook_raw": None
             }
+        
         payload = {
             "msg_id": msg_id,
         }
@@ -183,7 +224,7 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return data
+            return self._standardize_response(data)
 
     async def update_channel_message(
         self,
@@ -197,10 +238,14 @@ class CallApi:
         """更新频道消息（仅支持 KMarkdown type=9 和 CardMessage type=10）"""
         if not self.token:
             return {
-                "code": -1,
-                "msg": "token未刷新, 请刷新后重试",
-                "data": {}
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "token未刷新, 请刷新后重试",
+                "Kook_raw": None
             }
+        
         payload = {
             "msg_id": msg_id,
             "content": content,
@@ -226,7 +271,7 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return data
+            return self._standardize_response(data)
 
     async def delete_channel_message(
         self,
@@ -236,10 +281,14 @@ class CallApi:
         """删除频道消息"""
         if not self.token:
             return {
-                "code": -1,
-                "msg": "token未刷新, 请刷新后重试",
-                "data": {}
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "token未刷新, 请刷新后重试",
+                "Kook_raw": None
             }
+        
         payload = {
             "msg_id": msg_id,
         }
@@ -258,28 +307,92 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return data
+            return self._standardize_response(data)
 
-    async def upload_file(self, file_path: str) -> dict:
+    async def upload_asset(self, file=None, file_path=None, file_url=None) -> dict:
         if not self.token:
             return {
-                "code": -1,
-                "msg": "token未刷新, 请刷新后重试",
-                "data": {}
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "token未刷新, 请刷新后重试",
+                "Kook_raw": None
             }
         
-        async with self.session.post(
-            "https://www.kookapp.cn/api/v3/asset/create",
-            headers={
-                "Authorization": f"Bot {self.token}",
-                "Content-Type": "multipart/form-data"
-            },
-            data={
-                "file": open(file_path, "rb")
+        # 如果是 URL，直接返回（Kook 支持直接使用外部 URL）
+        if file_url:
+            return {
+                "status": "ok",
+                "retcode": 0,
+                "data": {"url": file_url},
+                "message_id": "",
+                "message": "使用外部 URL",
+                "Kook_raw": None
             }
-        ) as resp:
-            data = await resp.json()
-            return data
+        
+        # 如果是本地文件路径，读取文件
+        if file_path:
+            if not os.path.exists(file_path):
+                return {
+                    "status": "failed",
+                    "retcode": -1,
+                    "data": None,
+                    "message_id": "",
+                    "message": f"文件不存在: {file_path}",
+                    "Kook_raw": None
+                }
+            try:
+                with open(file_path, "rb") as f:
+                    file_data = f.read()
+                file = file_data
+            except Exception as e:
+                return {
+                    "status": "failed",
+                    "retcode": -1,
+                    "data": None,
+                    "message_id": "",
+                    "message": f"读取文件失败: {e}",
+                    "Kook_raw": None
+                }
+        
+        # 如果是二进制数据，直接上传
+        if file is None:
+            return {
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": "缺少文件数据",
+                "Kook_raw": None
+            }
+        
+        try:
+            # 使用 aiohttp 上传文件
+            from aiohttp import FormData
+            
+            form = FormData()
+            form.add_field('file', file, filename='upload')
+            
+            async with self.session.post(
+                "https://www.kookapp.cn/api/v3/asset/create",
+                headers={
+                    "Authorization": f"Bot {self.token}"
+                },
+                data=form
+            ) as resp:
+                data = await resp.json()
+                return self._standardize_response(data)
+        except Exception as e:
+            self.logger.error(f"上传文件失败: {e}")
+            return {
+                "status": "failed",
+                "retcode": -1,
+                "data": None,
+                "message_id": "",
+                "message": f"上传文件失败: {e}",
+                "Kook_raw": None
+            }
         
     async def get_ws_gateway(self, need_compress: bool = True) -> str:
         if not self.token:
