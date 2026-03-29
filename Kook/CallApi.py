@@ -26,13 +26,19 @@ class CallApi:
         
         if code == 0:
             # 成功
+            raw_data = raw_response.get("data", {})
+            kook_msg_id = message_id or raw_data.get("msg_id", "")
+            standardized_data = dict(raw_data)
+            if "message_id" not in standardized_data and "msg_id" in standardized_data:
+                standardized_data["message_id"] = standardized_data["msg_id"]
+            
             return {
                 "status": "ok",
                 "retcode": 0,
-                "data": raw_response.get("data", {}),
-                "message_id": message_id or raw_response.get("data", {}).get("msg_id", ""),
+                "data": standardized_data,
+                "message_id": kook_msg_id,
                 "message": msg or "操作成功",
-                "Kook_raw": raw_response
+                "kook_raw": raw_response
             }
         else:
             # 失败
@@ -42,7 +48,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": msg or f"操作失败 (code={code})",
-                "Kook_raw": raw_response
+                "kook_raw": raw_response
             }
 
     async def send_message(
@@ -62,7 +68,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "token未刷新, 请刷新后重试",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         self.logger.debug(f"send_message: target_id={target_id}, type={type}, content={content[:50] if content else 'None'}...")
@@ -115,7 +121,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "token未刷新, 请刷新后重试",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         nonce = str(uuid.uuid4())
@@ -162,7 +168,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "token未刷新, 请刷新后重试",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         payload = {
@@ -188,7 +194,7 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return self._standardize_response(data)
+            return self._standardize_response(data, message_id=msg_id)
 
     async def delete_direct_message(
         self,
@@ -203,7 +209,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "token未刷新, 请刷新后重试",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         payload = {
@@ -224,7 +230,7 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return self._standardize_response(data)
+            return self._standardize_response(data, message_id=msg_id)
 
     async def update_channel_message(
         self,
@@ -243,7 +249,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "token未刷新, 请刷新后重试",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         payload = {
@@ -271,7 +277,7 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return self._standardize_response(data)
+            return self._standardize_response(data, message_id=msg_id)
 
     async def delete_channel_message(
         self,
@@ -286,7 +292,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "token未刷新, 请刷新后重试",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         payload = {
@@ -307,7 +313,7 @@ class CallApi:
             }
         ) as resp:
             data = await resp.json()
-            return self._standardize_response(data)
+            return self._standardize_response(data, message_id=msg_id)
 
     async def upload_asset(self, file=None, file_path=None, file_url=None) -> dict:
         if not self.token:
@@ -317,7 +323,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "token未刷新, 请刷新后重试",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         # 如果是 URL，直接返回（Kook 支持直接使用外部 URL）
@@ -328,7 +334,7 @@ class CallApi:
                 "data": {"url": file_url},
                 "message_id": "",
                 "message": "使用外部 URL",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         # 如果是本地文件路径，读取文件
@@ -340,7 +346,7 @@ class CallApi:
                     "data": None,
                     "message_id": "",
                     "message": f"文件不存在: {file_path}",
-                    "Kook_raw": None
+                    "kook_raw": None
                 }
             try:
                 with open(file_path, "rb") as f:
@@ -353,7 +359,7 @@ class CallApi:
                     "data": None,
                     "message_id": "",
                     "message": f"读取文件失败: {e}",
-                    "Kook_raw": None
+                    "kook_raw": None
                 }
         
         # 如果是二进制数据，直接上传
@@ -364,7 +370,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": "缺少文件数据",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
         try:
@@ -391,7 +397,7 @@ class CallApi:
                 "data": None,
                 "message_id": "",
                 "message": f"上传文件失败: {e}",
-                "Kook_raw": None
+                "kook_raw": None
             }
         
     async def get_ws_gateway(self, need_compress: bool = True) -> str:

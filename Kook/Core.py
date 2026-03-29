@@ -425,7 +425,7 @@ class KookAdapter(BaseAdapter):
                 "data": None,
                 "message_id": "",
                 "message": message,
-                "Kook_raw": None
+                "kook_raw": None
             }
 
         def At(self, user_id: str) -> 'KookAdapter.Send':
