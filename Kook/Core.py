@@ -470,8 +470,11 @@ class KookAdapter(BaseAdapter):
                     url = upload_result["data"]["url"]
                 elif isinstance(file, str):
                     if file.startswith(("http://", "https://")):
-                        # URL，直接使用
-                        url = file
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
                     else:
                         # 本地文件路径，需要上传
                         upload_result = await self._adapter.api.upload_asset(file_path=file)
@@ -506,8 +509,11 @@ class KookAdapter(BaseAdapter):
                     url = upload_result["data"]["url"]
                 elif isinstance(file, str):
                     if file.startswith(("http://", "https://")):
-                        # URL，直接使用
-                        url = file
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
                     else:
                         # 本地文件路径，需要上传
                         upload_result = await self._adapter.api.upload_asset(file_path=file)
@@ -529,21 +535,24 @@ class KookAdapter(BaseAdapter):
             
             return asyncio.create_task(_send())
 
-        def File(self, file):
+        def File(self, file, filename=None):
             import asyncio
             
             async def _send():
                 # 判断输入类型
                 if isinstance(file, bytes):
                     # 二进制数据，需要上传
-                    upload_result = await self._adapter.api.upload_asset(file=file)
+                    upload_result = await self._adapter.api.upload_asset(file=file, file_path=filename)
                     if upload_result["retcode"] != 0:
                         return upload_result
                     url = upload_result["data"]["url"]
                 elif isinstance(file, str):
                     if file.startswith(("http://", "https://")):
-                        # URL，直接使用
-                        url = file
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file, file_path=filename)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
                     else:
                         # 本地文件路径，需要上传
                         upload_result = await self._adapter.api.upload_asset(file_path=file)
@@ -578,8 +587,11 @@ class KookAdapter(BaseAdapter):
                     url = upload_result["data"]["url"]
                 elif isinstance(file, str):
                     if file.startswith(("http://", "https://")):
-                        # URL，直接使用
-                        url = file
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
                     else:
                         # 本地文件路径，需要上传
                         upload_result = await self._adapter.api.upload_asset(file_path=file)

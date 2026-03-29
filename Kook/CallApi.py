@@ -326,16 +326,31 @@ class CallApi:
                 "kook_raw": None
             }
         
-        # 如果是 URL，直接返回（Kook 支持直接使用外部 URL）
+        # 如果是 URL，先下载文件内容
         if file_url:
-            return {
-                "status": "ok",
-                "retcode": 0,
-                "data": {"url": file_url},
-                "message_id": "",
-                "message": "使用外部 URL",
-                "kook_raw": None
-            }
+            self.logger.debug(f"从URL下载文件: {file_url}")
+            try:
+                async with self.session.get(file_url) as resp:
+                    if resp.status != 200:
+                        return {
+                            "status": "failed",
+                            "retcode": -1,
+                            "data": None,
+                            "message_id": "",
+                            "message": f"下载URL失败: HTTP {resp.status}",
+                            "kook_raw": None
+                        }
+                    file = await resp.read()
+            except Exception as e:
+                self.logger.error(f"下载URL失败: {e}")
+                return {
+                    "status": "failed",
+                    "retcode": -1,
+                    "data": None,
+                    "message_id": "",
+                    "message": f"下载URL失败: {e}",
+                    "kook_raw": None
+                }
         
         # 如果是本地文件路径，读取文件
         if file_path:
@@ -376,9 +391,21 @@ class CallApi:
         try:
             # 使用 aiohttp 上传文件
             from aiohttp import FormData
+            import mimetypes
+            
+            # 根据文件路径或URL推断文件名
+            filename = self._get_filename(file_path, file_url)
+            self.logger.debug(f"上传文件到Kook服务器: {filename}, 文件大小: {len(file)} bytes")
+            
+            # 根据文件名推断Content-Type和file_type
+            content_type, _ = mimetypes.guess_type(filename)
+            file_type = self._get_file_type(filename)
+            self.logger.debug(f"文件名: {filename}, Content-Type: {content_type}, file_type: {file_type}")
             
             form = FormData()
-            form.add_field('file', file, filename='upload')
+            form.add_field('file', file, filename=filename, content_type=content_type)
+            # 添加file_type参数
+            form.add_field('file_type', file_type)
             
             async with self.session.post(
                 "https://www.kookapp.cn/api/v3/asset/create",
@@ -387,8 +414,12 @@ class CallApi:
                 },
                 data=form
             ) as resp:
+                self.logger.debug(f"上传响应状态码: {resp.status}")
                 data = await resp.json()
-                return self._standardize_response(data)
+                self.logger.debug(f"上传响应数据: {data}")
+                result = self._standardize_response(data)
+                self.logger.debug(f"标准化上传结果: {result}")
+                return result
         except Exception as e:
             self.logger.error(f"上传文件失败: {e}")
             return {
@@ -399,6 +430,35 @@ class CallApi:
                 "message": f"上传文件失败: {e}",
                 "kook_raw": None
             }
+    
+    def _get_file_type(self, filename):
+        """根据文件名推断Kook API的file_type参数"""
+        if not filename:
+            return "file"
+        
+        filename_lower = filename.lower()
+        if filename_lower.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')):
+            return "image"
+        elif filename_lower.endswith(('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv')):
+            return "video"
+        elif filename_lower.endswith(('.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac')):
+            return "audio"
+        else:
+            return "file"
+    
+    def _get_filename(self, file_path=None, file_url=None):
+        """根据文件路径或URL推断文件名和扩展名"""
+        if file_path:
+            return os.path.basename(file_path)
+        elif file_url:
+            # 从URL中提取文件名
+            from urllib.parse import urlparse, unquote
+            parsed = urlparse(file_url)
+            filename = unquote(os.path.basename(parsed.path))
+            if filename:
+                return filename
+        # 默认文件名
+        return "upload.bin"
         
     async def get_ws_gateway(self, need_compress: bool = True) -> str:
         if not self.token:
