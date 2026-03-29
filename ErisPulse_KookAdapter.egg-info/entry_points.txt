@@ -1,2 +1,0 @@
-[erispulse.adapter]
-Kook = Kook:KookAdapter
