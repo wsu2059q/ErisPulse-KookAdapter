@@ -15,4 +15,4 @@ dependencies = [
 ]
 
 [project.entry-points."erispulse.adapter"]
-"Kook" = "Kook:KookAdapter"
+"kook" = "Kook:KookAdapter"

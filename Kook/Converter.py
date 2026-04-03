@@ -9,31 +9,39 @@ import time
 
 
 class KookAdapterConverter:
+    def __init__(self):
+        from ErisPulse.Core import logger
+        self.logger = logger.get_child("KookAdapterConverter")
+    
     def convert(self, data):
-        print("[DEBUG Convert] Input:", data)
         d = data.get("d", {})
         extra = d.get("extra", {})
         author = extra.get("author", {})
         kook_type = d.get("type", 0)
         channel_type = d.get("channel_type", "")
         
+        if kook_type != 255:
+            event_id = d.get("msg_id", str(uuid.uuid4()).replace("-", ""))
+        else:
+            event_id = str(uuid.uuid4()).replace("-", "")
+        
         onebot_data = {
-            "id": str(uuid.uuid4()).replace("-", ""),
-            "time": time.time(),
+            "id": event_id,
+            "time": int(time.time()),
             "type": self._get_message_type(data),
             "detail_type": self._get_detail_type(data),
-            "platform": "Kook",
+            "platform": "kook",
             "self": {
-                "platform": "Kook",
+                "platform": "kook",
                 "user_id": ""
             },
-            "Kook_raw": data,
-            "Kook_raw_type": kook_type,
+            "kook_raw": data,
+            "kook_raw_type": str(kook_type),
         }
         
         if onebot_data["type"] == "message":
+            onebot_data["message_id"] = d.get("msg_id", "")
             onebot_data.update({
-                "message_id": d.get("msg_id", ""),
                 "user_id": author.get("id", ""),
                 "message": self._convert_message_content(data),
                 "alt_message": d.get("content", ""),
@@ -51,10 +59,13 @@ class KookAdapterConverter:
                 onebot_data["mentions"] = mentions
                 
         elif onebot_data["type"] == "notice":
+            body = extra.get("body", {})
+            onebot_data["message_id"] = body.get("msg_id", "")
             onebot_data["user_id"] = author.get("id", "")
-            onebot_data["group_id"] = extra.get("body", {}).get("channel_id", "")
+            onebot_data["group_id"] = body.get("channel_id", "")
             onebot_data.update(self._convert_notice_data(data))
-        print("[DEBUG Convert] Output:", onebot_data)
+        
+        self.logger.debug(f"Convert Output: {onebot_data}")
         return onebot_data
     
     def _get_message_type(self, data):

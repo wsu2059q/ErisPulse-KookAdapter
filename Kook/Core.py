@@ -30,8 +30,11 @@ class KookAdapter(BaseAdapter):
         self.config = self._get_config()
         is_vaild, msg = self._check_valid_config()
         if not is_vaild:
-            self.logger.error(msg)
-            raise Exception(msg)
+            self.logger.warning(f"{msg}，生成默认配置文件")
+            default_config = self._get_default_config()
+            self.config_manager.setConfig("KookAdapter", default_config, immediate=True)
+            self.logger.info("默认配置已生成，请填写 token 后重新运行")
+            raise SystemExit(0)
         
         self.api = CallApi(self.config.get("token"))
     
@@ -40,6 +43,21 @@ class KookAdapter(BaseAdapter):
         self._running = True
         while self._running:
             try:
+                # 尝试 RESUME（如果 sn > 0）
+                if self.sn > 0:
+                    self.logger.info("尝试使用 RESUME 恢复连接...")
+                    if await self._try_resume():
+                        # RESUME 成功，启动消息处理
+                        await self._start_message_processing()
+                        continue
+                    else:
+                        # RESUME 失败，重置 sn，进行全新连接
+                        self.logger.info("RESUME 失败，重新获取 gateway...")
+                        self.sn = 0
+                        self.buffer.clear()
+                        self.need_buffer = False
+                
+                # 全新连接（HELLO 流程）
                 url = await self.api.get_ws_gateway(self.config.get("compress", True))
                 async with websockets.connect(
                     url,
@@ -54,16 +72,8 @@ class KookAdapter(BaseAdapter):
                     self.websocket = websocket
                     self.logger.info("KookAdapter 连接成功，开始处理消息")
                     
-                    # 启动心跳和消息接收任务
-                    self._heartbeat_task = asyncio.create_task(self._send_heartbeat())
-                    self._receive_task = asyncio.create_task(self._receive_messages())
-                    
-                    # 等待任务完成（连接断开时会返回）
-                    await asyncio.gather(
-                        self._heartbeat_task,
-                        self._receive_task,
-                        return_exceptions=True
-                    )
+                    # 启动消息处理
+                    await self._start_message_processing()
                     
             except Exception as e:
                 self.logger.error(f"KookAdapter 连接异常: {e}, 5秒后重试")
@@ -79,6 +89,64 @@ class KookAdapter(BaseAdapter):
         if self.websocket:
             await self.websocket.close()
         self.logger.info("KookAdapter 已停止")
+
+    async def _send_logout(self):
+        if self.websocket:
+            try:
+                await self.websocket.close()
+            except Exception as e:
+                self.logger.error(f"下线失败: {e}")
+
+    async def _try_resume(self):
+        """
+        尝试使用 RESUME[4] 恢复连接
+        
+        Returns:
+            bool: 是否成功恢复
+        """
+        try:
+            url = await self.api.get_ws_gateway(self.config.get("compress", True))
+            async with websockets.connect(url, ping_interval=None) as websocket:
+                # 发送 RESUME 信令
+                resume_payload = {
+                    "s": 4,
+                    "sn": self.sn
+                }
+                await websocket.send(json.dumps(resume_payload).encode("utf-8"))
+                self.logger.info(f"发送 RESUME[4] 信令，sn={self.sn}")
+                
+                # 等待响应
+                message = await asyncio.wait_for(websocket.recv(), timeout=6)
+                if self.config.get("compress", True):
+                    message = zlib.decompress(message)
+                if isinstance(message, bytes):
+                    message = message.decode("utf-8")
+                data = json.loads(message)
+                
+                if data.get("s") == 6:
+                    # RESUME 成功
+                    session_id = data.get("d", {}).get("session_id", "")
+                    self.logger.info(f"RESUME 成功，session_id: {session_id}")
+                    self.websocket = websocket
+                    return True
+                else:
+                    self.logger.warning(f"RESUME 失败，收到响应: {data}")
+                    return False
+        except Exception as e:
+            self.logger.error(f"RESUME 尝试失败: {e}")
+            return False
+
+    async def _start_message_processing(self):
+        """启动消息处理（心跳和接收）"""
+        self._heartbeat_task = asyncio.create_task(self._send_heartbeat())
+        self._receive_task = asyncio.create_task(self._receive_messages())
+        
+        # 等待任务完成（连接断开时会返回）
+        await asyncio.gather(
+            self._heartbeat_task,
+            self._receive_task,
+            return_exceptions=True
+        )
     
     async def _wait_server_hello(self, websocket):
         """等待服务器发送hello消息"""
@@ -117,6 +185,8 @@ class KookAdapter(BaseAdapter):
                 
                 data = json.loads(message)
                 signal_type = data.get("s")
+
+                self.logger.debug(f"收到消息: {data}")
                 
                 if signal_type == 0:
                     # 正常消息事件
@@ -162,73 +232,32 @@ class KookAdapter(BaseAdapter):
             except Exception as e:
                 self.logger.error(f"心跳发送异常: {e}")
                 return
-    
-    async def _reconnect(self):
-        """重新连接"""
-        self.logger.info("开始执行重连...")
-        if self.websocket:
-            try:
-                await self.websocket.close()
-            except:
-                pass
-        self.websocket = None
-        
-        max_retries = 5
-        retry_count = 0
-        while retry_count < max_retries and self._running:
-            try:
-                async with websockets.connect(self.api.get_ws_gateway(self.config.get("compress", True))) as websocket:
-                    resume_payload = {
-                        "s": 4,
-                        "sn": self.sn
-                    }
-                    await websocket.send(json.dumps(resume_payload).encode("utf-8"))
-                    self.logger.info(f"发送RESUME[4]信令，sn={self.sn}")
-                    
-                    message = await asyncio.wait_for(
-                        websocket.recv(),
-                        timeout=6
-                    )
-                    if self.config.get("compress", True):
-                        message = zlib.decompress(message)
-                    if isinstance(message, bytes):
-                        message = message.decode("utf-8")
-                    data = json.loads(message)
-                    
-                    if data.get("s") == 6:
-                        session_id = data.get("d", {}).get("session_id", "")
-                        self.logger.info(f"RESUME成功，连接已恢复，session_id: {session_id}")
-                        self.websocket = websocket
-                        return True
-                    elif data.get("s") == 5:
-                        code = data.get("d", {}).get("code", "")
-                        err = data.get("d", {}).get("err", "")
-                        self.logger.error(f"收到RECONNECT[5]信令，resume失败，code={code}, err={err}")
-                        return False
-                    else:
-                        self.logger.warning(f"RESUME响应异常，预期 s=6，实际: {data}")
-                        
-            except Exception as e:
-                self.logger.error(f"重连尝试 {retry_count + 1}/{max_retries} 失败: {e}")
-            
-            retry_count += 1
-            await asyncio.sleep(5)
-        
-        self.logger.error("重连失败，已达到最大重试次数")
-        return False
 
     async def _handle_reconnect_signal(self):
-        """处理重连信号"""
-        self.logger.warning("处理RECONNECT[5]信令：重新获取gateway，清空sn计数和消息队列...")
+        """
+        处理 RECONNECT[5] 信令
+        
+        Kook 规则:
+        1. 收到 RECONNECT 后，必须重新获取 gateway
+        2. 清空 sn 计数和消息队列
+        3. 重新连接（HELLO 流程）
+        """
+        self.logger.warning("收到 RECONNECT[5] 信令，开始重新连接...")
+        
+        # 关闭当前连接
         if self.websocket:
             try:
                 await self.websocket.close()
             except:
                 pass
         self.websocket = None
+        
+        # 清空状态
         self.sn = 0
         self.buffer.clear()
         self.need_buffer = False
+        
+        # 重新连接会在 start() 方法的循环中自动进行
 
     async def _handle_message_signal(self, data: dict):
         """
@@ -301,10 +330,16 @@ class KookAdapter(BaseAdapter):
     def _get_config(self):
         return self.config_manager.getConfig("KookAdapter")
 
+    def _get_default_config(self):
+        return {
+            "token": "",
+            "compress": True
+        }
+
     def _check_valid_config(self) -> bool|str:
         if self.config is None:
             return False, "KookAdapter 无配置项, 请添加后重试"
-        if self.config.get("token") is None:
+        if self.config.get("token") is None or self.config.get("token") == "":
             return False, "KookAdapter 无token配置项, 请添加后重试"
         return True, ""
 
@@ -349,14 +384,12 @@ class KookAdapter(BaseAdapter):
                 # 删除频道消息
                 return await self.api.delete_channel_message(**api_params)
         elif endpoint == "/asset/create":
-            # 上传文件接口，需要 file_path 参数
-            return await self.api.upload_file(**params)
+            # 上传文件接口，支持 file、file_path、file_url 参数
+            return await self.api.upload_asset(**params)
         else:
             raise ValueError(f"未知的 API endpoint: {endpoint}")
 
     class Send(BaseAdapter.Send):
-        """Send 嵌套类，继承自 BaseAdapter.Send"""
-
         _METHOD_MAP = {
             "text": "Text",
             "image": "Image",
@@ -373,6 +406,28 @@ class KookAdapter(BaseAdapter):
             self._reply_message_id = None
             self._at_all = False
 
+        def _build_modifiers(self) -> dict:
+            """构建修饰符参数"""
+            modifiers = {}
+            if self._at_all:
+                modifiers["mention_all"] = True
+            if self._at_user_ids:
+                modifiers["mention"] = self._at_user_ids
+            if self._reply_message_id:
+                modifiers["quote"] = self._reply_message_id
+            return modifiers
+
+        def _error_response(self, message: str, retcode: int = -1) -> dict:
+            """构建错误响应"""
+            return {
+                "status": "failed",
+                "retcode": retcode,
+                "data": None,
+                "message_id": "",
+                "message": message,
+                "kook_raw": None
+            }
+
         def At(self, user_id: str) -> 'KookAdapter.Send':
             """@用户（可多次调用）"""
             self._at_user_ids.append(user_id)
@@ -388,25 +443,9 @@ class KookAdapter(BaseAdapter):
             self._reply_message_id = message_id
             return self
 
-        def _build_content(self, text: str) -> dict:
-            """构建消息内容"""
-            content = {"type": "text", "content": text}
-
-            if self._at_all:
-                content["mention_all"] = True
-
-            if self._at_user_ids:
-                content["mention"] = self._at_user_ids
-
-            if self._reply_message_id:
-                content["quote"] = self._reply_message_id
-
-            return content
-
         def Text(self, text: str):
             """发送文本消息"""
             import asyncio
-            content = self._build_content(text)
             return asyncio.create_task(
                 self._adapter.call_api(
                     endpoint="/message/create",
@@ -414,66 +453,169 @@ class KookAdapter(BaseAdapter):
                     target_id=self._target_id,
                     content=text,
                     type=1,
-                    **{k: v for k, v in content.items() if k != "content" and k != "type"}
+                    **self._build_modifiers()
                 )
             )
 
-        def Image(self, url: str):
-            """发送图片消息"""
+        def Image(self, file):
             import asyncio
-            return asyncio.create_task(
-                self._adapter.call_api(
+            
+            async def _send():
+                # 判断输入类型
+                if isinstance(file, bytes):
+                    # 二进制数据，需要上传
+                    upload_result = await self._adapter.api.upload_asset(file=file)
+                    if upload_result["retcode"] != 0:
+                        return upload_result
+                    url = upload_result["data"]["url"]
+                elif isinstance(file, str):
+                    if file.startswith(("http://", "https://")):
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                    else:
+                        # 本地文件路径，需要上传
+                        upload_result = await self._adapter.api.upload_asset(file_path=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                else:
+                    return self._error_response("不支持的文件类型")
+                
+                # 发送图片消息
+                return await self._adapter.call_api(
                     endpoint="/message/create",
                     target_type=self._target_type,
                     target_id=self._target_id,
                     content=url,
-                    type=2
+                    type=2,
+                    **self._build_modifiers()
                 )
-            )
+            
+            return asyncio.create_task(_send())
 
-        def Video(self, url: str):
-            """发送视频消息"""
+        def Video(self, file):
             import asyncio
-            return asyncio.create_task(
-                self._adapter.call_api(
+            
+            async def _send():
+                # 判断输入类型
+                if isinstance(file, bytes):
+                    # 二进制数据，需要上传
+                    upload_result = await self._adapter.api.upload_asset(file=file)
+                    if upload_result["retcode"] != 0:
+                        return upload_result
+                    url = upload_result["data"]["url"]
+                elif isinstance(file, str):
+                    if file.startswith(("http://", "https://")):
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                    else:
+                        # 本地文件路径，需要上传
+                        upload_result = await self._adapter.api.upload_asset(file_path=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                else:
+                    return self._error_response("不支持的文件类型")
+                
+                # 发送视频消息
+                return await self._adapter.call_api(
                     endpoint="/message/create",
                     target_type=self._target_type,
                     target_id=self._target_id,
                     content=url,
-                    type=3
+                    type=3,
+                    **self._build_modifiers()
                 )
-            )
+            
+            return asyncio.create_task(_send())
 
-        def File(self, url: str):
-            """发送文件消息"""
+        def File(self, file, filename=None):
             import asyncio
-            return asyncio.create_task(
-                self._adapter.call_api(
+            
+            async def _send():
+                # 判断输入类型
+                if isinstance(file, bytes):
+                    # 二进制数据，需要上传
+                    upload_result = await self._adapter.api.upload_asset(file=file, file_path=filename)
+                    if upload_result["retcode"] != 0:
+                        return upload_result
+                    url = upload_result["data"]["url"]
+                elif isinstance(file, str):
+                    if file.startswith(("http://", "https://")):
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file, file_path=filename)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                    else:
+                        # 本地文件路径，需要上传
+                        upload_result = await self._adapter.api.upload_asset(file_path=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                else:
+                    return self._error_response("不支持的文件类型")
+                
+                # 发送文件消息
+                return await self._adapter.call_api(
                     endpoint="/message/create",
                     target_type=self._target_type,
                     target_id=self._target_id,
                     content=url,
-                    type=4
+                    type=4,
+                    **self._build_modifiers()
                 )
-            )
+            
+            return asyncio.create_task(_send())
 
-        def Voice(self, url: str):
-            """发送语音消息"""
+        def Voice(self, file):
             import asyncio
-            return asyncio.create_task(
-                self._adapter.call_api(
+            
+            async def _send():
+                # 判断输入类型
+                if isinstance(file, bytes):
+                    # 二进制数据，需要上传
+                    upload_result = await self._adapter.api.upload_asset(file=file)
+                    if upload_result["retcode"] != 0:
+                        return upload_result
+                    url = upload_result["data"]["url"]
+                elif isinstance(file, str):
+                    if file.startswith(("http://", "https://")):
+                        # URL，需要上传到Kook服务器
+                        upload_result = await self._adapter.api.upload_asset(file_url=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                    else:
+                        # 本地文件路径，需要上传
+                        upload_result = await self._adapter.api.upload_asset(file_path=file)
+                        if upload_result["retcode"] != 0:
+                            return upload_result
+                        url = upload_result["data"]["url"]
+                else:
+                    return self._error_response("不支持的文件类型")
+                
+                # 发送语音消息
+                return await self._adapter.call_api(
                     endpoint="/message/create",
                     target_type=self._target_type,
                     target_id=self._target_id,
                     content=url,
-                    type=8
+                    type=8,
+                    **self._build_modifiers()
                 )
-            )
+            
+            return asyncio.create_task(_send())
 
         def Markdown(self, text: str):
             """发送 KMarkdown 消息"""
             import asyncio
-            content = self._build_content(text)
             return asyncio.create_task(
                 self._adapter.call_api(
                     endpoint="/message/create",
@@ -481,7 +623,7 @@ class KookAdapter(BaseAdapter):
                     target_id=self._target_id,
                     content=text,
                     type=9,
-                    **{k: v for k, v in content.items() if k != "content" and k != "type"}
+                    **self._build_modifiers()
                 )
             )
 
@@ -495,9 +637,56 @@ class KookAdapter(BaseAdapter):
                     target_type=self._target_type,
                     target_id=self._target_id,
                     content=json.dumps(card_data),
-                    type=10
+                    type=10,
+                    **self._build_modifiers()
                 )
             )
+
+        def Raw_ob12(self, message):
+            import asyncio
+            
+            async def _send():
+                # 统一转换为列表
+                if isinstance(message, dict):
+                    segments = [message]
+                else:
+                    segments = message
+                
+                # 处理每个消息段
+                results = []
+                for segment in segments:
+                    seg_type = segment.get("type")
+                    seg_data = segment.get("data", {})
+                    
+                    if seg_type == "text":
+                        result = await self.Text(seg_data.get("text", ""))
+                    elif seg_type == "image":
+                        result = await self.Image(seg_data.get("file") or seg_data.get("url", ""))
+                    elif seg_type == "video":
+                        result = await self.Video(seg_data.get("file") or seg_data.get("url", ""))
+                    elif seg_type == "file":
+                        result = await self.File(seg_data.get("file") or seg_data.get("url", ""))
+                    elif seg_type == "record":
+                        result = await self.Voice(seg_data.get("file") or seg_data.get("url", ""))
+                    elif seg_type == "mention":
+                        self._at_user_ids.append(seg_data.get("user_id"))
+                        continue  # 不立即发送，等待文本消息
+                    elif seg_type == "mention_all":
+                        self._at_all = True
+                        continue
+                    elif seg_type == "reply":
+                        self._reply_message_id = seg_data.get("message_id")
+                        continue
+                    else:
+                        self._adapter.logger.warning(f"不支持的消息段类型: {seg_type}")
+                        continue
+                    
+                    results.append(result)
+                
+                # 返回最后一个结果
+                return results[-1] if results else None
+            
+            return asyncio.create_task(_send())
 
         def Edit(self, msg_id: str, content: str):
             """编辑消息（仅支持 KMarkdown 和 CardMessage）"""

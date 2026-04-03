@@ -1,4 +1,7 @@
-# ErisPulse-KookAdapter
+<p align="center">
+  <img src=".github/assets/kook.png" width="64" />
+</p>
+<h1 align="center">ErisPulse-KookAdapter</h1>
 基于开源机器人框架[ErisPulse](https://github.com/ErisPulse/ErisPulse)的Kook(开黑啦)机器人适配器。
 
 项目目前已托管至PyPi，使用以下命令以完成安装：
