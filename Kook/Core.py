@@ -236,14 +236,23 @@ class KookAdapter(BaseAdapter):
     async def _handle_reconnect_signal(self):
         """
         处理 RECONNECT[5] 信令
-        
+
         Kook 规则:
         1. 收到 RECONNECT 后，必须重新获取 gateway
         2. 清空 sn 计数和消息队列
         3. 重新连接（HELLO 流程）
         """
         self.logger.warning("收到 RECONNECT[5] 信令，开始重新连接...")
-        
+
+        # 取消心跳任务
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
+
         # 关闭当前连接
         if self.websocket:
             try:
@@ -251,12 +260,12 @@ class KookAdapter(BaseAdapter):
             except:
                 pass
         self.websocket = None
-        
+
         # 清空状态
         self.sn = 0
         self.buffer.clear()
         self.need_buffer = False
-        
+
         # 重新连接会在 start() 方法的循环中自动进行
 
     async def _handle_message_signal(self, data: dict):
