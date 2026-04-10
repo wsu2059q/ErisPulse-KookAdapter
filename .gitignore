@@ -2,3 +2,5 @@ dist/*
 config/*
 */__pycache__/*
 ErisPulse_KookAdapter.egg-info/*
+config
+main.py
