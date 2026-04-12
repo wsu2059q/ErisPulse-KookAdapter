@@ -12,6 +12,10 @@ class KookAdapterConverter:
     def __init__(self):
         from ErisPulse.Core import logger
         self.logger = logger.get_child("KookAdapterConverter")
+        self.bot_id = ""
+
+    def set_bot_id(self, bot_id: str):
+        self.bot_id = bot_id
     
     def convert(self, data):
         d = data.get("d", {})
@@ -33,7 +37,7 @@ class KookAdapterConverter:
             "platform": "kook",
             "self": {
                 "platform": "kook",
-                "user_id": ""
+                "user_id": self.bot_id
             },
             "kook_raw": data,
             "kook_raw_type": str(kook_type),
